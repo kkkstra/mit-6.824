@@ -36,12 +36,8 @@ type WorkerReply struct {
 	NReduce  int
 	NMap     int
 
-	// for map task
-	MapTaskId int
-	Filename  string
-
-	// for reduce task
-	ReduceTaskId int
+	TaskId   int
+	Filename string // for map task
 }
 
 // Cook up a unique-ish UNIX-domain socket name
