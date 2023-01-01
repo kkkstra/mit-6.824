@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	INTER_FILE_SUFFIX = "mr"
+	INTER_FILE_PREFIX = "mr"
 )
 
 // Map functions return a slice of KeyValue.
@@ -53,14 +53,13 @@ func Worker(mapf func(string, string) []KeyValue,
 		args := WorkerArgs{}
 		reply := WorkerReply{}
 		ok := call("Coordinator.AssignTask", &args, &reply)
-		if !ok || reply.TaskType == 0 {
+		if !ok || reply.TaskType == ExitTask {
 			// failed to contact the coordinator, so the job is done
 			break
 		}
 
 		switch reply.TaskType {
-		case 1:
-			// map task
+		case MapTask:
 			// open and read the file
 			file, err := os.Open(reply.Filename)
 			if err != nil {
@@ -87,7 +86,7 @@ func Worker(mapf func(string, string) []KeyValue,
 
 			// write to the intermediate files
 			for i := 0; i < reply.NReduce; i++ {
-				oname := INTER_FILE_SUFFIX + "-" + strconv.Itoa(reply.TaskId) + "-" + strconv.Itoa(i)
+				oname := INTER_FILE_PREFIX + "-" + strconv.Itoa(reply.TaskId) + "-" + strconv.Itoa(i)
 				ofile, err := os.CreateTemp("", oname+"*")
 				if err != nil {
 					log.Fatalf("cannot create temp file")
@@ -106,14 +105,13 @@ func Worker(mapf func(string, string) []KeyValue,
 			// notify the coordinator that the task is done
 			args = WorkerArgs{reply.TaskType, reply.TaskId}
 			reply = WorkerReply{}
-			call("Coordinator.MapTaskFinished", &args, &reply)
-		case 2:
-			// reduce task
+			call("Coordinator.TaskFinished", &args, &reply)
+		case ReduceTask:
 			intermediate := []KeyValue{}
 
 			// load the file "mr-X-Y"
 			for i := 0; i < reply.NMap; i++ {
-				iname := INTER_FILE_SUFFIX + "-" + strconv.Itoa(i) + "-" + strconv.Itoa(reply.TaskId)
+				iname := INTER_FILE_PREFIX + "-" + strconv.Itoa(i) + "-" + strconv.Itoa(reply.TaskId)
 				file, err := os.Open(iname)
 				if err != nil {
 					log.Fatalf("cannot open %v", iname)
@@ -174,10 +172,10 @@ func Worker(mapf func(string, string) []KeyValue,
 			// notify the coordinator that the task is done
 			args = WorkerArgs{reply.TaskType, reply.TaskId}
 			reply = WorkerReply{}
-			call("Coordinator.ReduceTaskFinished", &args, &reply)
+			call("Coordinator.TaskFinished", &args, &reply)
+		case WaitingTask:
+			time.Sleep(time.Second)
 		}
-
-		time.Sleep(time.Second)
 	}
 }
 

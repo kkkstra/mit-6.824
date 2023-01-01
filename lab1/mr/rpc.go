@@ -16,6 +16,28 @@ import (
 // and reply for an RPC.
 //
 
+// type of task
+const (
+	ExitTask    = 0
+	MapTask     = 1
+	ReduceTask  = 2
+	WaitingTask = 3
+)
+
+// state of task
+const (
+	WaitingState = 0
+	WorkingState = 1
+	DoneState    = 2
+)
+
+// phase of work
+const (
+	ExitPhase   = 0
+	MapPhase    = 1
+	ReducePhase = 2
+)
+
 type ExampleArgs struct {
 	X int
 }
@@ -26,13 +48,19 @@ type ExampleReply struct {
 
 // Add your RPC definitions here.
 
+type Task struct {
+	TaskType int
+	TaskId   int
+	Filename string
+}
+
 type WorkerArgs struct {
 	TaskType int
 	TaskId   int
 }
 
 type WorkerReply struct {
-	TaskType int // 0: exit, 1: map task, 2: reduce task
+	TaskType int
 	NReduce  int
 	NMap     int
 
