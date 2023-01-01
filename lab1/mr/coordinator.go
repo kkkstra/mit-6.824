@@ -1,17 +1,18 @@
 package mr
 
 import (
-	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"net/rpc"
 	"os"
 	"sync"
+	"time"
 )
 
 type Coordinator struct {
 	// Your definitions here.
+	NMap    int      // the number of map tasks
 	NReduce int      // the number of reduce tasks
 	Files   []string //the files to use
 	TaskNum int
@@ -19,7 +20,7 @@ type Coordinator struct {
 	WorkPhase      int // the phase of work
 	MapTaskChan    chan *Task
 	ReduceTaskChan chan *Task
-	TaskManager    TaskStateSet
+	TaskManager    TaskStateSet // the manager of the states of tasks
 
 	mu sync.Mutex
 }
@@ -29,8 +30,9 @@ type TaskStateSet struct {
 }
 
 type TaskStateInfo struct {
-	State   int
-	TaskPtr *Task
+	State     int
+	StartTime time.Time // for crash handler
+	TaskPtr   *Task
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -48,10 +50,14 @@ func (c *Coordinator) AssignTask(args *WorkerArgs, reply *WorkerReply) error {
 			*reply = WorkerReply{
 				TaskType: task.TaskType,
 				NReduce:  c.NReduce,
+				NMap:     c.NMap,
 				TaskId:   task.TaskId,
 				Filename: task.Filename,
 			}
-			c.TaskManager.changeState(task.TaskId)
+			// change the state of task
+			taskState := c.TaskManager.TaskState[task.TaskId]
+			taskState.State = WorkingState
+			taskState.StartTime = time.Now()
 		} else {
 			// All map tasks have been completed or in-progress
 			reply.TaskType = WaitingTask
@@ -60,7 +66,26 @@ func (c *Coordinator) AssignTask(args *WorkerArgs, reply *WorkerReply) error {
 			}
 		}
 	case ReducePhase:
-		fmt.Println("Reduce")
+		if len(c.ReduceTaskChan) > 0 {
+			// reduce tasks haven't been completed
+			task := *<-c.ReduceTaskChan
+			*reply = WorkerReply{
+				TaskType: task.TaskType,
+				NReduce:  c.NReduce,
+				NMap:     c.NMap,
+				TaskId:   task.TaskId,
+			}
+			// change the state of task
+			taskState := c.TaskManager.TaskState[task.TaskId]
+			taskState.State = WorkingState
+			taskState.StartTime = time.Now()
+		} else {
+			// All reduce tasks have been completed or in-progress
+			reply.TaskType = WaitingTask
+			if c.TaskManager.checkTaskDone() {
+				c.switchToNextPhase()
+			}
+		}
 	case ExitPhase:
 		reply.TaskType = ExitTask
 	}
@@ -70,16 +95,11 @@ func (c *Coordinator) AssignTask(args *WorkerArgs, reply *WorkerReply) error {
 
 func (c *Coordinator) switchToNextPhase() {
 	if c.WorkPhase == MapPhase {
-		c.WorkPhase = ExitPhase
+		c.loadReduceTask()
+		c.WorkPhase = ReducePhase
 	} else if c.WorkPhase == ReducePhase {
 		c.WorkPhase = ExitPhase
 	}
-}
-
-// change the state of task
-func (t *TaskStateSet) changeState(taskId int) {
-	taskState := t.TaskState[taskId]
-	taskState.State = WorkingState
 }
 
 // check if all the tasks of current state are done
@@ -128,7 +148,8 @@ func (c *Coordinator) TaskFinished(args *WorkerArgs, reply *WorkerReply) error {
 		taskState := c.TaskManager.TaskState[args.TaskId]
 		taskState.State = DoneState
 	case ReduceTask:
-		fmt.Println("Reduce")
+		taskState := c.TaskManager.TaskState[args.TaskId]
+		taskState.State = DoneState
 	}
 	return nil
 }
@@ -163,19 +184,15 @@ func (c *Coordinator) Done() bool {
 	// Your code here.
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.WorkPhase == ExitPhase {
-		return true
-	} else {
-		return false
-	}
+	return c.WorkPhase == ExitPhase
 
 	// return ret
 }
 
-func (c *Coordinator) importMapTask() {
+func (c *Coordinator) loadMapTask() {
 	for _, v := range c.Files {
-		c.TaskNum++
 		taskId := c.TaskNum
+		c.TaskNum++
 		task := Task{
 			TaskType: MapTask,
 			TaskId:   taskId,
@@ -193,11 +210,59 @@ func (c *Coordinator) importMapTask() {
 	}
 }
 
+func (c *Coordinator) loadReduceTask() {
+	for i := 0; i < c.NReduce; i++ {
+		taskId := c.TaskNum
+		c.TaskNum++
+		task := Task{
+			TaskType: ReduceTask,
+			TaskId:   taskId,
+		}
+
+		// initialize the reduce task
+		taskStateInfo := TaskStateInfo{
+			State:   WaitingState,
+			TaskPtr: &task,
+		}
+		c.TaskManager.TaskState[taskId] = &taskStateInfo
+
+		c.ReduceTaskChan <- &task
+	}
+}
+
+func (c *Coordinator) CrashHandler() {
+	for {
+		c.mu.Lock()
+
+		if c.WorkPhase == ExitPhase {
+			c.mu.Unlock()
+			break
+		}
+
+		for _, v := range c.TaskManager.TaskState {
+			// the task crash
+			if v.State == WorkingState && time.Since(v.StartTime) >= 10*time.Second {
+				v.State = WaitingState
+				switch v.TaskPtr.TaskType {
+				case MapTask:
+					c.MapTaskChan <- v.TaskPtr
+				case ReduceTask:
+					c.ReduceTaskChan <- v.TaskPtr
+				}
+			}
+		}
+
+		c.mu.Unlock()
+		time.Sleep(1 * time.Second)
+	}
+}
+
 // create a Coordinator.
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{
+		NMap:           len(files),
 		NReduce:        nReduce,
 		Files:          files,
 		TaskNum:        0,
@@ -208,8 +273,9 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	}
 
 	// Your code here.
-	c.importMapTask()
-
+	c.loadMapTask()
 	c.server()
+	go c.CrashHandler()
+
 	return &c
 }

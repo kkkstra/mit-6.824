@@ -51,7 +51,7 @@ type ExampleReply struct {
 type Task struct {
 	TaskType int
 	TaskId   int
-	Filename string
+	Filename string // for map task
 }
 
 type WorkerArgs struct {

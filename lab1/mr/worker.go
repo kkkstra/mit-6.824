@@ -111,7 +111,7 @@ func Worker(mapf func(string, string) []KeyValue,
 
 			// load the file "mr-X-Y"
 			for i := 0; i < reply.NMap; i++ {
-				iname := INTER_FILE_PREFIX + "-" + strconv.Itoa(i) + "-" + strconv.Itoa(reply.TaskId)
+				iname := INTER_FILE_PREFIX + "-" + strconv.Itoa(i) + "-" + strconv.Itoa(reply.TaskId-reply.NMap)
 				file, err := os.Open(iname)
 				if err != nil {
 					log.Fatalf("cannot open %v", iname)
@@ -131,7 +131,7 @@ func Worker(mapf func(string, string) []KeyValue,
 				// remove the intermediate files
 				err = os.Remove(iname)
 				if err != nil {
-					log.Fatalf("cannot open delete" + iname)
+					log.Fatalf("cannot delete" + iname)
 				}
 			}
 
@@ -139,7 +139,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			sort.Sort(ByKey(intermediate))
 
 			// write to the output file
-			oname := "mr-out-" + strconv.Itoa(reply.TaskId)
+			oname := "mr-out-" + strconv.Itoa(reply.TaskId-reply.NMap)
 			ofile, err := os.CreateTemp("", oname+"*")
 			if err != nil {
 				log.Fatalf("cannot create temp file")

@@ -15,5 +15,6 @@
 # vendor/
 
 .vscode
-pg*.txt
+*.txt
 mr-*-*
+*.so
