@@ -127,12 +127,6 @@ func Worker(mapf func(string, string) []KeyValue,
 					intermediate = append(intermediate, kv)
 				}
 				file.Close()
-
-				// remove the intermediate files
-				err = os.Remove(iname)
-				if err != nil {
-					log.Fatalf("cannot delete" + iname)
-				}
 			}
 
 			// sort by key
@@ -168,6 +162,17 @@ func Worker(mapf func(string, string) []KeyValue,
 			}
 			os.Rename(ofile.Name(), oname)
 			ofile.Close()
+
+			// remove the intermediate files
+			// note that the intermediate files should be deleted after the reduce task is finished
+			// in case a crash happens
+			for i := 0; i < reply.NMap; i++ {
+				iname := INTER_FILE_PREFIX + "-" + strconv.Itoa(i) + "-" + strconv.Itoa(reply.TaskId-reply.NMap)
+				err = os.Remove(iname)
+				if err != nil {
+					log.Fatalf("cannot delete" + iname)
+				}
+			}
 
 			// notify the coordinator that the task is done
 			args = WorkerArgs{reply.TaskType, reply.TaskId}
